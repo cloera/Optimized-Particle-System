@@ -1,0 +1,177 @@
+Christian Loera
+Game Particles Work Log
+
+
+GENERAL APPROACH
+
+I will use a top to bottom approach where I will start with the easiest optimizations and then work
+my way to more complex optimizations that require large amounts of refactoring.
+
+I will make optimizations to the particle system:
+	- Create custom compiler settings
+	- Change all doubles to floats
+	- Fix the alignment of the data
+	- Add const where ever possible
+	- Define all Big Four Constructors
+	- Change all pointers to references
+	- Make as many functions inline
+	- Add implicit conversion protection
+	- Remove unnecessary temporaries
+		- Remove any unnecessary invariants
+		- Overload -=, +=, *=, /= operators
+	- Check which switch statement cases are accessed the most. Move most accessed to top
+	- Check profiler for hotspots
+		- Implement Return Value Optimizations where ever possible
+		- Use SIMD functions for Vect4D and Matrix classes
+	- Check profiler again for hotspots
+		- Refactor Particle and ParticleEmitter class into HotCold structure
+	- Check profiler again for hotspots
+		- See if a proxy would be necessary in Matrix or Vect4D classes
+	- Check profiler one last time for hotspots
+		- Fine tune program
+
+
+WORK LOG
+
+/*************
+* 11/8/2016  *
+**************/
+
+- Created Speedy_McSpeed compiler setting
+	- Will contain custom compiler settings optimized for speed/performance
+	- Copied Release settings to start off with
+	- Settings:
+		C++ - Optimization
+		- Inline Function Expansion: Only _inline
+		- Favor Size or Speed: Favor fast code
+		- Omit Frame Pointers: Yes
+		C++ - General
+		- Multi-processor Compilation: Yes
+		C++ - Code Generation
+		- Enable Enhanced Instruction Set: Streaming SIMD Extensions 2
+		- Code Generation: Floating Point Model
+		C++ - Advanced
+		- Compile As: Compile as C++ Code
+		Linker - Debugging
+		- Generate Debug Info: Optimize for fast linking
+
+- Changing every single double to float. All functions should take in and return floats. 
+  All built-in library functions that use doubles should change to built-in functions that use float.
+	- Changed references of double to float in Vect4D.h and Vect4D.cpp. Changed sqrt() -> sqrtf().
+	- Changed references of double to float in Matrix.h and Matrix.cpp. Changed fabs() -> fabsf().
+	  Changed cos() -> cosf() and sin() -> sinf()
+	- Changed references of double to float in Particle.h and Particle.cpp.
+	- Changed references of double to float in ParticleEmitter.h and ParticleEmitter.cpp.
+	  Changed glGetDoublev() -> glGetFloatv(), GL_DOUBLE -> GL_FLOAT, glLoadMatrixd() -> glLoadMatrixf()
+	- Changed glLoadMatrixd(...<double*>(...)) -> glLoadMatrixf(...<float*>(...)) in main.cpp
+
+- Fixed alignment of ParticleEmitter and Particle classes
+
+- Added const where ever possible in Vect4D class
+- Added const in all class functions
+	- Update timings are starting to get faster
+
+- Removed particle_list in ParticleEmitter class. Not being used.
+- Defined big four constructors for all class
+- Removed CopyDataOnly() in particle class. Not being used
+- Removed Matrix operator*( float s ). Not being used.
+
+- Removing all temporaries and useless class variables called once
+	- Removed temps in Vect4D class
+	- Removed temps in setRotZMatrix(), setScaleMatrix(), Inverse()
+
+- SIMD is tricky to implement. Can't get anonymous union struct to compile correctly
+
+- changed drawBuffer from list to vector
+
+
+
+/*************
+* 11/11/2016  *
+**************/
+
+
+- I will continue to remove useless temporaries and invariants in order to condense code even further.
+  In doing so I expect huge gains in speed because I would eliminate unnecessary calls
+  to constructors and assinment operators. This will be helpful in the long run when 
+  adding SIMD because I should only be left with the necessary components needed 
+  to do the proper math.
+	- In main.cpp, I removed cameraMatrix, transMatrix, and inverseCameraMatrix from while loop
+	  and moved it outside the loop.  Removed duplicate CameraMatrix, TransMatrix
+	  initilizations outside of loop.  Removed tmp and cameraMatrix since it is only 
+	  multiplying the identity matrix with transMatrix.
+	- Removed start_position, start_velocity from ParticleEmitter
+	- Removed pos_variance, vel_variance, max_life, spawn_frequency, scale_variance,
+	  buffer_count, and max_particles from ParticleEmitter class
+	- Removed t_var from ParticleEmitter::Execute()
+	- Removed tmp.get() calls in ParticleEmitter::draw()
+	- In Particle class, removed all prev_row, curr_row, and diff_row variables as well as any
+	  temporaries that were tied to them.
+		- Cut down 7 miliseconds of time. A very unexpected jump in performance.
+	- Removed invariants within ParticleEmitter::draw() for loop. Variable are declared outside for loop.
+		- Cut down ~13 milliseconds of time. Again another unexpected jump in performance from such a small change.
+- Removing temporaries are the way to go.
+
+	  
+- Removed set(), get(), and MatrixRowEnum in Matrix class. Replaced cameraMatrix.get() in
+  ParticleEmitter::draw() with camPosVect.set() in order to set camPosVect with row 3 of cameraMatrix
+	
+	
+- Changed compiler settings for Speedy_McSpeed.
+	- Compile As: default
+	- Inline Function Expansion: default
+
+
+- Now that most unnecessary temporary variables are gone from my code I can now apply SIMD to my Matrix and Vect4D
+  classes. This should condense and speed up my math operations even further resulting in large performance gains.
+	- Added anonymous union structs for x, y, z, and w variables in Vect4D.
+	- Created Vect4D(__m128) specialized constructor.
+	- Added SIMD to +, -, and * operator functions.
+	- Added SIMD to set(), norm(), Cross()
+	- Added anonymous union structs to float and Vect4D variables in Matrix.
+	- Refactored Matrix() and Matrix(const Matrix& t) to set Vect4D variables.
+	- Added SIMD to operator *() function in Matrix class.
+- Did not see as much of a performance jump as I expected implementing SIMD. Saved about 3 miliseconds.
+
+	
+	
+/*************
+* 11/12/2016  *
+**************/
+	
+	
+- Adding Align16.h file.
+
+- My timings are starting to plateau and I'm not seeing anymore drastic changes in time. I will now have to use the profiler often to see
+  where I can cut down my code.
+	- Implemented specialized constructor in Matrix class to take in four Vect4D. Function is used to condense creation of 
+	  inverseCameraMatrix in main() and transCamera in draw() to one line.
+	- Added implicit conversion proctection to Matrix and Vect4D.
+	- Changed _mm_rsqrt_ps() to _mm_spqrt_ps(). NEVER use rsprt(). It distorts particle funnel.  _mm_rsqrt_ps() returns a rough appoximation which must be the cause.
+	- Removed drawBuffer and replaced it with headParticle for particle drawing.
+	- Defined and implemented += and *= operator() functions in Vect4D to get rid of more temporaries.
+		- Cut down ~4 miliseconds. More than I expected it would reduce. Removing temporaries seems to be the best way to go.
+	- Moved initialized variables in constructors into initializer list.
+	- Added Hot Cold Structure to Particle class. Implemented ColdParticle class to hold cold data.
+		- Cut down ~2 miliseconds from total time. Not as big of a gain as I expected.
+	- Added MmultMMMM proxy structure to multiply five matrices all at one. It also multiplies a Matrix * Matrix.
+		- No noticable difference in time reduction. Might have been useless to implement?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
